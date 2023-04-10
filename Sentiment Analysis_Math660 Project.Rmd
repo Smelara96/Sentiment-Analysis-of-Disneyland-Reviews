@@ -1,0 +1,516 @@
+---
+title: "Sentiment Analysis_Math660 Project"
+author: "Stephanie Melara, Yasmin Azem"
+date: "2023-04-03"
+output: html_document
+---
+
+# Sentiment Analysis
+
+## Overview:
+
+* The Walt Disney Company is well know for its various theme parks, which are found in multiple countries around the world. 
+
+* The company is always looking for ways to improve its parks. 
+
+* One such method of improvement includes sentiment analysis.
+
+## Sentiment Analysis
+
+* Sentiment analysis is a process through which we can analyze and assign values to the words or opinions people express about an experience or service.
+
+* Sentiment analysis utilizes a lexicon to rank words based on their positive, negative or emotional connotations. Note, different lexicons use different ranking systems. 
+
+* In this project we used the afinn lexicon. 
+
+## Motivations and Objectives
+
+* The purpose of sentiment analysis is to make conclusions based on the words people use to describe the service. In this situation, we will look at the reviews people leave about a theme park. 
+ 
+* In particular we will attempt to deduce:
+ 
+    1. Which Parks receive the most positive reviews and which receive the most negative reviews?
+    2. What words do people use most frequently when describing the parks in a negative or positive review?
+    
+ 
+* Once these conclusions are made available, a park could theoretically use them to improve the park visitor's experience.
+ 
+## Dataset 
+
+  * The dataset was found compiled and posted on kaggle.com . The data was collected off of the website Trip Advisor. A formal citation can be found below. 
+  
+  Citation: Chillar, A. (2021, April). Disneyland Reviews. Retrieved February 9, 2023 from https://www.kaggle.com/datasets/arushchillar/disneyland-reviews
+  
+  * The dataset contains information such as: park branch, date the park was visited, number rating and written review. 
+  
+  * Before we can begin the sentiment analysis, the data has to be properly cleaned. You can see the code for this below. 
+  
+  * The first step of our cleaning involves removing missing information, NAs and duplicate reviews. 
+
+```{r}
+###load appropriate libraries
+
+library("purrr")
+library("stringr")
+library("tibble")
+library("tidyr")
+library("readr")
+library("forcats")
+library(infer)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(wordcloud2)
+library(dunn.test)
+library(devtools)
+library("qdap")
+library(tidytext)
+library(tidyselect)
+library(tidyverse)
+```
+
+
+
+```{r}
+###Load data
+DisneylandReviews <- read.csv('C:\\Users\\smela\\Downloads\\DisneylandReviews.csv')
+
+###Show us a summary of the data
+glimpse(DisneylandReviews)
+dim(DisneylandReviews)
+```
+
+```{r}
+###Convert to factor
+DisneylandReviews$Branch <- as.factor(DisneylandReviews$Branch)
+
+###Remove missing values
+DisneylandReviews <- DisneylandReviews %>%
+  filter(!Year_Month == "missing")
+
+###Only keep distinct reviews
+DisneylandReviews <- DisneylandReviews %>%
+  distinct(Review_ID, .keep_all = TRUE)
+
+###Remove NA and missing data
+DisneylandReviews$text <- NA
+
+###Show us a summary of the now edited data
+dim(DisneylandReviews)
+glimpse(DisneylandReviews)
+```
+* Note, that after removing missing information we had a total of 40,023 reviews, versus the original 42,656.
+
+* The second data cleaning step is more concerned with fixing the format of our data. 
+
+* In this step we remove abbreviations, contractions, numbers, symbols and uppercase letters.
+
+```{r}
+## create a function for cleaning data
+text_clean <- function(x){
+  x <- replace_abbreviation(x)
+  x <- replace_contraction(x)
+  x <- replace_number(x)
+  x <- replace_ordinal(x)
+  x <- replace_symbol(x)
+  x <- tolower(x)
+  return(x)
+}
+
+###Use clean function to clean data. This removes numbers, symbols, abbreviations etc.
+DisneylandReviews$text <- text_clean(DisneylandReviews$Review_Text)
+
+###Create vectors for plural words and their singular counterparts
+ a <- c("queues" , "lines", "kids", "rides", "times", "days", "minutes", "tickets", "loved", "fireworks", "characters", "nuts", "tourists", "actions", "attractions")
+ b <- c("queue", "line", "kid", "ride", "time", "day", "minute", "ticket", "love", "firework", "character", "nut", "tourist", "action", "attraction")
+
+ ###Turn plural to singular 
+DisneylandReviews$text <- mgsub(a, b,DisneylandReviews$Review_Text)
+```
+
+* In this step we also replace plural words for their singular counterparts. 
+
+* We decided this step was needed after we saw that the most frequently used words often came in pairs, such as "Kids/kid" or "lines/line". 
+
+* By using only the plural of singular version of these words, we can get a more accurate count of the most frequently used words. 
+
+* Finally, we removed stop words. Stop words are words that have little emotional value, such as "I", "to", or "when."
+
+* In addition to these common stop words, we added a few of our own.Words such as "paris" would not technically by useful to our analysis as they don't describe an emotion, just the location of the park.   
+
+```{r} 
+### Removing stop words 
+
+custom_stop_words <- bind_rows(tibble(word = c("disneyland","park","paris", "disney", "but", "to", "i", "the", "my", "mine", "any", "are", "when", "where", "parks", "2", "3", "5", "10", "california","HongKong","people","world","minute", "hk", "hong", "kong", "9", "4", "ve", "1", "china", "chinese" ),
+                                      lexicon = c("custom", "custom","custom", "custom","custom", "custom","custom", "custom","custom", "custom","custom", "custom", "custom", "custom", "custom", "custom" , "custom", "custom" , "custom", "custom","custom", "custom" , "custom", "custom", "custom", "custom", "custom", "custom" , "custom", "custom", "custom", "custom", "custom")),
+                               stop_words)
+```
+
+## Next Step: Analysis
+
+ * Now that the data has been cleaned, we can begin our analysis. 
+ 
+ * First, let us consider which parks receive the most positive and most negative reviews?
+
+```{r}
+##### Make a barplot about satisfaction rating
+ggplot(DisneylandReviews, aes(x = Branch, fill = factor(Rating)))+
+  geom_bar(position= "dodge")+
+  scale_fill_brewer(palette = "Set1")+
+  ggtitle("Ratings by Branch")+
+  ylab("Count")+
+  guides(fill = guide_legend(title = "Rating"))
+
+#### Summary data
+a <- DisneylandReviews %>%
+  group_by(Branch) %>%
+  summarize(mean = mean(Rating), sd = sd(Rating), median = median(Rating), nrows = nrow(cur_data()))
+data.frame(a)
+```
+
+
+* The bar graph above clearly shows that Disneyland California receives many more 5 star reviews than the other parks. 
+
+* While Disneyland Paris receives the most 1 star reviews. 
+
+* The table supports this bar graph by providing mean and median ratings.
+
+
+
+
+## Park Specific Analysis
+
+* Next, we can perform analyses on the individual parks. 
+
+* For each park, what are the most common words used in negative and positive reviews?
+
+* There are notes written into the code that explain the steps taken. 
+
+* First, Lets analyze the words most frequently used in negative California reviews:
+
+
+```{r}
+
+###Create object to analyze California Reviews. This object contains only reviews for Disneyland California. 
+
+Disney_California <- DisneylandReviews |>
+  filter(Branch == "Disneyland_California")
+
+###Load afinn analysis data. This is the lexicon we will be using for our analysis. 
+
+afinn <- read.csv("C:\\Users\\smela\\Downloads\\Afinn.csv", stringsAsFactors = FALSE)
+
+### Create object for California sentiment. Tokenize, filter out the stop words, integrate afinn words and their sentiment values and group by review. Summarize using mean and sum. 
+California_sentiment <- Disney_California |>
+  unnest_tokens(word,text) |>
+  filter(!word %in% custom_stop_words$word) |>
+  inner_join(afinn, by = "word") |>
+  group_by(Review_ID) |>
+  summarize(rating = mean(Rating), sentiment = sum(value))
+
+### Create a scatterplot that shows the overall sentiment of each review, and groups them by their rating.
+California_sentiment |>
+  ggplot(aes(x = rating, y = sentiment))+geom_jitter()
+
+```
+     
+
+* As you can see in this plot, most reviews contain a total sentiment score around zero. This would mean that the negative and positive words they use sum up to zero.
+
+* However, there does seem to be a pattern as the review rating increases. As we move in to 4 or 5 star reviews we begin to see more reviews that have higher overall positive scores. This would imply these ratings use the most positive language.
+
+
+```{r}
+###Create object for California negative sentiment reviews. Join data with stop words and filter for reviews with total sentiment less than -15. Remove stop words and count
+California_negative <- Disney_California %>%
+  inner_join(California_sentiment, by = c("Review_ID")) %>%
+  filter(sentiment < -15)
+negative_freqCali<- California_negative %>%
+  unnest_tokens(word, text)%>%
+  anti_join(custom_stop_words)%>%
+  count(word, sort = TRUE)
+
+###Create barplot to display most frequent words in negative sentiment reviews
+California_negative %>%
+  unnest_tokens(word, text) %>%
+  anti_join(custom_stop_words) %>%
+  count(word)  %>%
+  top_n(20, n) %>%
+  mutate(word = reorder(word,n)) %>%
+  ggplot(aes(n,word)) +
+  geom_col()+ labs(y = NULL, x = "word counts")+
+  ggtitle("20 most frequently used words in negative California Reviews")+ theme_classic()
+
+
+```
+    
+
+     
+
+
+    * Now let us repeat these steps for the words most frequently used in positive California reviews.
+
+```{r}
+###Create object for Disneyland California positive sentiment reviews. Join data with stop words and filter for reviews with total sentiment greater than 15. Remove stop words and count
+   
+California_positive <- Disney_California %>%
+  inner_join(California_sentiment, by = c("Review_ID")) %>%
+  filter(sentiment > 15)
+positive_freqCali <- California_positive %>%
+  unnest_tokens(word, text)%>%
+  anti_join(custom_stop_words)%>%
+  count(word, sort = TRUE) 
+  
+  ###create barplot to display most frequent words in positive sentiment reviews 
+  
+California_positive %>%
+  unnest_tokens(word, text) %>%
+  anti_join(custom_stop_words) %>%
+  count(word)  %>%
+  top_n(20, n) %>%
+  mutate(word = reorder(word,n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col()+ labs(y = NULL, x ="word counts" )+
+  ggtitle("20 most frequently used words in positive California Reviews") + theme_classic()
+```
+  
+* Let us repeat the steps for the Paris Branch:
+
+```{r}
+
+### Create object for Paris sentiment. Tokenize, filter out the stop words, integrate afinn words and their sentiment values and group by review. Summarize using mean and sum.  
+
+Disney_Paris <- DisneylandReviews |>
+  filter(Branch == "Disneyland_Paris")
+Paris_sentiment <- Disney_Paris |>
+  unnest_tokens(word, text) |>
+  filter(!word %in% custom_stop_words$word) |>
+  inner_join(afinn, by = "word") |>
+  group_by(Review_ID) |>
+  summarize(rating = mean(Rating), sentiment = sum(value))
+
+### Create plot. Each dot shows 1 review's total sentiment. Reviews are  separated by rating
+
+Paris_sentiment |>
+  ggplot(aes(x = rating, y = sentiment))+geom_jitter()+ theme_light()
+
+```
+   
+   * Note, the pattern in this scatter plot is similar to that in the California scatter plot. Most reviews appear to have a summed sentiment of around zero, but as reviews increase in rating, they are more likely to have higher, more positive sentiment scores. 
+
+
+```{r}
+
+### Create object for Paris negative reviews data. Filter for reviews with overall sentiment less than -15. Tokenize, remove stop words and count. 
+
+Paris_negative <- Disney_Paris %>%
+  inner_join(Paris_sentiment, by = c("Review_ID")) %>%
+  filter(sentiment < -15)
+negative_freqParis <- Paris_negative %>%
+  unnest_tokens(word, text)%>%
+  anti_join(custom_stop_words)%>%
+  count(word, sort = TRUE)
+
+###Create graph displaying top words found in negative reviews
+Paris_negative %>%
+  unnest_tokens(word, text) %>%
+  anti_join(custom_stop_words) %>%
+  count(word)  %>%
+  top_n(20, n) %>%
+  mutate(word = reorder(word,n)) %>%
+  ggplot(aes(n,word)) +
+  geom_col()+ labs(y = NULL, x = "word counts") +
+  ggtitle("20 most frequently used words in negative Paris Reviews") + theme_classic()
+```
+```{r}
+### Create object for Paris positive reviews data. Filter for reviews with overall sentiment greater than 15. Tokenize, remove stop words and count. 
+
+Paris_positive <- Disney_Paris |>
+  inner_join(Paris_sentiment, by = c("Review_ID")) |>
+  filter(sentiment > 15)
+positive_freqParis <- Paris_positive |>
+  unnest_tokens(word, text)|>
+  anti_join(custom_stop_words)|>
+  count(word, sort = TRUE)
+
+###Create barplot to display most frequent words in positive sentiment reviews
+Paris_positive |>
+  unnest_tokens(word, text) |>
+  anti_join(custom_stop_words) |>
+  count(word) |>
+  top_n(20, n) |>
+  mutate(word = reorder(word,n)) |>
+  ggplot(aes(n,word)) +
+  geom_col()+ labs(y = NULL, x = "word counts")+
+  ggtitle("20 most frequently used words in positive Paris Reviews")+ theme_classic()
+
+
+```
+
+* Finally, Let us perform the analysis for the Hong Kong Branch. 
+
+
+```{r}
+###Create object to analyze HongKong Reviews. Clean data
+Disney_HongKong <- DisneylandReviews |>
+  filter(Branch == "Disneyland_HongKong")
+
+### Create object for HongKongsentiment. tokenize, filter out the stop words, integrate afinn words and their sentiment values and group by review. Summarize using mean and sum. 
+HongKong_sentiment <- Disney_HongKong |>
+  unnest_tokens(word,text) |>
+  filter(!word %in% custom_stop_words$word) |>
+  inner_join(afinn, by = "word") |>
+  group_by(Review_ID) |>
+  summarize(rating = mean(Rating), sentiment = sum(value))
+
+### Create plot. Each dot shows 1 review's total sentiment. Reviews are  separated by rating
+
+HongKong_sentiment |>
+  ggplot(aes(x = rating, y = sentiment))+geom_jitter()+ theme_light()
+
+###Create object for HongKong negative sentiment reviews. Join data with stop words and filter for reviews with total sentiment less than -15. Remove stop words and count
+HongKong_negative <- Disney_HongKong %>%
+  inner_join(HongKong_sentiment, by = c("Review_ID")) %>%
+  filter(sentiment < -15)
+
+negative_freqHongKong<- HongKong_negative %>%
+  unnest_tokens(word, text)%>%
+  anti_join(custom_stop_words)%>%
+  count(word, sort = TRUE)
+
+###create bar plot to display most frequent words in negative sentiment reviews
+HongKong_negative %>%
+  unnest_tokens(word, text) %>%
+  anti_join(custom_stop_words) %>%
+  count(word)  %>%
+  top_n(17, n) %>%
+  mutate(word = reorder(word,n)) %>%
+  ggplot(aes(n,word)) +
+  geom_col()+ labs(y = NULL, x = "word counts")+
+  ggtitle("20 most frequently used words in negative Hong Kong Reviews")+ theme_classic()
+
+
+```
+
+```{r}
+
+###Create object for HongKong negative sentiment reviews. Join data with stop words and filter for reviews with total sentiment greater than 15. Remove stop words and count
+HongKong_positive <- Disney_HongKong %>%
+  inner_join(HongKong_sentiment, by = c("Review_ID")) %>%
+  filter(sentiment > 15)
+positive_freqHongKong <- HongKong_positive %>%
+  unnest_tokens(word, text)%>%
+  anti_join(custom_stop_words)%>%
+  count(word, sort = TRUE)
+
+###create barplot to display most frequent words in positive sentiment reviews
+HongKong_positive %>%
+  unnest_tokens(word, text) %>%
+  anti_join(custom_stop_words) %>%
+  count(word)  %>%
+  top_n(20, n) %>%
+  mutate(word = reorder(word,n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col()+ labs(y = NULL, x ="word counts" )+
+  ggtitle("20 most frequently used words in positive Hong Kong Reviews")+ theme_classic()
+
+
+```
+
+
+## Conclusions
+
+* As we can see, this dataset has allowed us to make a number of conclusions
+
+    1. Which Parks receive the most negative and most positive reviews?  
+      * As we can see based off our first bar graph, Disneyland California received the most 5 star ratings and Disneyland Paris.  
+      * This conclusion is further supported by our data frame table below the graph, which gives Disneyland California a mean rating of 4.41 and Disneyland Paris a mean rating of 3.98.
+    
+    2. What words do people use most frequently in negative and positive reviews?
+    
+    * For ease of reviewing we created 2 tables, each lists the most common words used in negative and positive reviews for each park. 
+    
+```{r}
+c <- Paris_positive |>
+  unnest_tokens(word, text) |>
+  anti_join(custom_stop_words) |>
+  count(word) |>
+  top_n(21, n) |>
+  mutate(Paris_word = reorder(word,n)) |>
+  select(Paris_word)
+
+ d<- California_positive |>
+  unnest_tokens(word, text) |>
+  anti_join(custom_stop_words) |>
+  count(word) |>
+  top_n(21, n) |>
+  mutate(California_word = reorder(word,n)) |>
+  select(California_word)
+
+e <- HongKong_positive |>
+  unnest_tokens(word, text) |>
+  anti_join(custom_stop_words) |>
+  count(word) |>
+  top_n(20, n) |>
+  mutate( Hong_Kong_word = reorder(word,n)) |>
+  select(Hong_Kong_word) 
+f <- cbind(d, e)
+y <- cbind(c, f) 
+```
+    
+
+```{r}
+g <- Paris_negative |> 
+  unnest_tokens(word, text) |>
+  anti_join(custom_stop_words) |>
+  count(word) |>
+  top_n(17, n) |>
+  mutate(Paris_word = reorder(word,n)) |>
+  select(Paris_word)
+
+h <- California_negative |>
+  unnest_tokens(word, text) |>
+  anti_join(custom_stop_words) |>
+  count(word) |>
+  top_n(17, n) |>
+  mutate(California_word = reorder(word,n)) |>
+  select(California_word)
+
+i <- HongKong_negative |>
+  unnest_tokens(word, text) |>
+  anti_join(custom_stop_words) |>
+  count(word) |>
+  top_n(17, n) |>
+  mutate( Hong_Kong_word = reorder(word,n)) |>
+  select(Hong_Kong_word) 
+j <- cbind(i, h)
+x <- cbind(j, g)
+
+```
+## Negative reviews
+```{r}
+x
+```
+
+
+## Positive reviews
+
+```{r}
+y
+```
+
+* The first thing one would notice when comparing these lists is that there is a lot of repetition. 
+
+* As we pointed out from the scatter plot, when we sum the sentiment scores in any review, they typically sum up to around zero. This can be explained by most people using a lot of the same words regardless of whether they are leaving a good or bad review. 
+
+* For example, words "line" or "ride" appear in almost every list. Regardless of park, or the positive or negative experience, most people will mention the lines or the rides when reviewing the park. 
+
+* However, there are unique words that can be of interest to us. 
+
+* For example, In positive reviews of Hong Kong people frequently mention the parade and the train. Obviously these are big rides or events that people thoroughly enjoy.  And in negative reviews, visitors mention "security" or "police". This might imply that the Park has a safety issue, or needs a less frightening way for employing safety personnel in the park. 
+
+* In regards to the California branch, positive reviews specifically mention "adventures". One could take this to mean that people enjoy this park because it is exciting.
+
+* Paris reviews, both negative and positive, often mention "hotel." It seems some people very much enjoy the hotel, while others did not. 
+
+* Though none of these conclusions are absolute they can give us some good ideas as to the changes that should happen with                                                                                                                                                                                               in the parks. 
